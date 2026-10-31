@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis Caching Demo</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --ink: #1c2230; --muted: #6b7385; --line: #e3e6ec;
+    --mongo: #13aa52; --mongo-bg: #e7f6ed; --redis: #d82c20; --redis-bg: #fdecea;
+    --miss: #b7791f; --miss-bg: #fdf3e1;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { margin: 0; font-size: 26px; }
+  h2 { margin: 0 0 12px; font-size: 17px; }
+  .sub { color: var(--muted); margin: 4px 0 0; }
+  header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  .pill { display: inline-block; padding: 3px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; background: var(--line); }
+  .pill.practice { background: var(--miss-bg); color: var(--miss); }
+  .pill.solution { background: var(--mongo-bg); color: var(--mongo); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  select, button { font: inherit; border-radius: 8px; border: 1px solid var(--line); padding: 8px 14px; background: #fff; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .big-btn { width: 100%; padding: 14px; font-size: 16px; font-weight: 700; color: #fff; border: 0; }
+  .btn-mongo { background: var(--mongo); }
+  .btn-redis { background: var(--redis); }
+  .time { font-size: 44px; font-weight: 800; margin: 14px 0 2px; font-variant-numeric: tabular-nums; }
+  .time small { font-size: 18px; color: var(--muted); font-weight: 600; }
+  .badge { display: inline-block; font-weight: 700; font-size: 13px; padding: 2px 10px; border-radius: 6px; }
+  .badge.HIT { background: var(--redis-bg); color: var(--redis); }
+  .badge.MISS { background: var(--miss-bg); color: var(--miss); }
+  .badge.NONE { background: var(--mongo-bg); color: var(--mongo); }
+  .history { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; min-height: 26px; }
+  .chip { font-size: 12px; padding: 2px 8px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+  .chip.HIT { background: var(--redis-bg); color: var(--redis); }
+  .chip.MISS { background: var(--miss-bg); color: var(--miss); }
+  .chip.NONE { background: var(--mongo-bg); color: var(--mongo); }
+  .avg { color: var(--muted); font-size: 13px; margin-top: 6px; }
+
+  /* Flow diagram */
+  .flow { display: flex; align-items: center; justify-content: center; gap: 0; flex-wrap: wrap; margin: 16px 0; }
+  .node { border: 2px solid var(--line); border-radius: 10px; padding: 10px 16px; text-align: center; min-width: 120px; background: #fff; transition: all .25s; }
+  .node b { display: block; }
+  .node span { font-size: 12px; color: var(--muted); }
+  .arrow { width: 46px; height: 2px; background: var(--line); position: relative; transition: background .25s; }
+  .arrow::after { content: ""; position: absolute; right: -2px; top: -5px; border: 6px solid transparent; border-left-color: inherit; border-left: 8px solid var(--line); }
+  .node.on-redis { border-color: var(--redis); background: var(--redis-bg); }
+  .node.on-mongo { border-color: var(--mongo); background: var(--mongo-bg); }
+  .node.on-app { border-color: var(--ink); }
+  .node.miss { border-color: var(--miss); border-style: dashed; background: var(--miss-bg); }
+  .arrow.on { background: var(--ink); }
+  .arrow.on::after { border-left-color: var(--ink); }
+  .arrow.off { opacity: .25; }
+  .node.off { opacity: .3; }
+  .flow-text { text-align: center; color: var(--muted); min-height: 24px; }
+
+  .section { margin-top: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .keys { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .keys div { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dashed var(--line); }
+  .empty { color: var(--muted); font-style: italic; }
+  pre { background: #1c2230; color: #e6e9ef; padding: 16px; border-radius: 10px; overflow: auto; font-size: 13px; line-height: 1.55; margin: 0; max-height: 520px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .toast { margin-top: 10px; font-size: 14px; min-height: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Redis Caching Demo</h1>
+      <p class="sub">Same report, do tareeke se: har baar MongoDB vs pehle Redis se poochna</p>
+    </div>
+    <div>
+      <span class="pill" id="countPill">…</span>
+      <span class="pill" id="modePill">…</span>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <label>City:
+      <select id="city"><option value="all">All cities</option></select>
+    </label>
+    <span class="meta">Har city ki apni Redis key banti hai, jaise <code>report:Delhi</code></span>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2>1. Without Cache</h2>
+      <button class="big-btn btn-mongo" id="btnNoCache">Get Report (seedha MongoDB)</button>
+      <div class="time" id="tNoCache">–<small> ms</small></div>
+      <span class="badge NONE" id="bNoCache">har baar MongoDB</span>
+      <div class="history" id="hNoCache"></div>
+      <div class="avg" id="aNoCache"></div>
+    </div>
+    <div class="card">
+      <h2>2. With Redis Cache</h2>
+      <button class="big-btn btn-redis" id="btnCache">Get Report (Redis cache)</button>
+      <div class="time" id="tCache">–<small> ms</small></div>
+      <span class="badge" id="bCache" style="visibility:hidden">–</span>
+      <div class="history" id="hCache"></div>
+      <div class="avg" id="aCache"></div>
+    </div>
+  </div>
+
+  <div class="card section">
+    <h2>Request kahan se hoke aayi?</h2>
+    <div class="flow">
+      <div class="node" id="nBrowser"><b>Browser</b><span>button click</span></div>
+      <div class="arrow" id="a1"></div>
+      <div class="node" id="nApp"><b>Node / Express</b><span>server.js</span></div>
+      <div class="arrow" id="a2"></div>
+      <div class="node" id="nRedis"><b>Redis</b><span>RAM · key-value</span></div>
+      <div class="arrow" id="a3"></div>
+      <div class="node" id="nMongo"><b>MongoDB</b><span>disk · 50k docs scan</span></div>
+    </div>
+    <div class="flow-text" id="flowText">Koi button dabao…</div>
+  </div>
+
+  <div class="grid2 section">
+    <div class="card">
+      <h2>Redis ke andar abhi kya hai</h2>
+      <div class="keys" id="keys"><div class="empty">Koi key nahi</div></div>
+      <div class="toolbar" style="margin:14px 0 0">
+        <button id="btnClear">Clear Cache</button>
+        <button id="btnAdd">+ Add Student (DB write)</button>
+      </div>
+      <div class="toast" id="toast"></div>
+    </div>
+    <div class="card">
+      <h2>Report <span class="meta" id="reportMeta"></span></h2>
+      <div id="report" class="empty">Abhi koi report nahi</div>
+    </div>
+  </div>
+
+  <div class="card section">
+    <h2>Ye caching kaise implement hui? <span class="meta" id="codeFile"></span></h2>
+    <pre id="code">loading…</pre>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const runs = { NoCache: [], Cache: [] };
+
+  async function api(url, opts) {
+    const res = await fetch(url, opts);
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || res.statusText);
+    return body;
+  }
+
+  async function loadInfo() {
+    const info = await api('/api/info');
+    $('countPill').textContent = info.totalStudents.toLocaleString('en-IN') + ' students';
+    $('modePill').textContent = info.mode === 'practice' ? 'PRACTICE mode' : 'SOLUTION mode';
+    $('modePill').className = 'pill ' + info.mode;
+    $('codeFile').textContent = '(' + info.cacheFile + ')';
+    if ($('city').options.length === 1) {
+      info.cities.forEach((c) => $('city').add(new Option(c, c)));
+    }
+    $('code').textContent = await (await fetch('/api/code')).text();
+  }
+
+  function showFlow(cache) {
+    const nodes = ['nBrowser', 'nApp', 'nRedis', 'nMongo'];
+    const arrows = ['a1', 'a2', 'a3'];
+    nodes.forEach((n) => $(n).className = 'node');
+    arrows.forEach((a) => $(a).className = 'arrow');
+    $('nBrowser').classList.add('on-app');
+    $('nApp').classList.add('on-app');
+    $('a1').classList.add('on');
+
+    if (cache === 'NONE') {
+      $('nRedis').classList.add('off'); $('a2').classList.add('on'); $('a3').classList.add('on');
+      $('nMongo').classList.add('on-mongo');
+      $('flowText').textContent = 'Redis ko skip kiya, seedha MongoDB ne 50k documents scan kiye.';
+    } else if (cache === 'HIT') {
+      $('a2').classList.add('on'); $('nRedis').classList.add('on-redis');
+      $('a3').classList.add('off'); $('nMongo').classList.add('off');
+      $('flowText').textContent = 'CACHE HIT: Redis ke paas data tha. MongoDB ko chhua bhi nahi.';
+    } else {
+      $('a2').classList.add('on'); $('nRedis').classList.add('miss');
+      $('a3').classList.add('on'); $('nMongo').classList.add('on-mongo');
+      $('flowText').textContent = 'CACHE MISS: Redis khaali tha, MongoDB se laaye aur Redis me SET kar diya (agli baar HIT hoga).';
+    }
+  }
+
+  function record(which, r) {
+    $('t' + which).innerHTML = r.timeMs + '<small> ms</small>';
+    const badge = $('b' + which);
+    badge.style.visibility = 'visible';
+    badge.className = 'badge ' + r.cache;
+    badge.textContent = r.cache === 'NONE' ? 'har baar MongoDB' : 'CACHE ' + r.cache + (r.cache === 'HIT' ? ' · Redis se' : ' · MongoDB se');
+
+    runs[which].unshift(r);
+    runs[which] = runs[which].slice(0, 12);
+    $('h' + which).innerHTML = runs[which]
+      .map((x) => `<span class="chip ${x.cache}">${x.timeMs} ms</span>`).join('');
+    const avg = runs[which].reduce((s, x) => s + x.timeMs, 0) / runs[which].length;
+    $('a' + which).textContent = `Average (last ${runs[which].length}): ${avg.toFixed(2)} ms`;
+  }
+
+  function renderReport(d, source) {
+    $('reportMeta').textContent = `· ${d.city} · ${d.totalStudents.toLocaleString('en-IN')} students · source: ${source} · bana: ${new Date(d.generatedAt).toLocaleTimeString()}`;
+    const rows = d.byCourse.map((c) => `<tr><td>${c.course}</td><td class="num">${c.students}</td><td class="num">${c.avgMarks}</td><td class="num">${c.avgAttendance}%</td></tr>`).join('');
+    const top = d.toppers.map((t) => `<tr><td>${t.name}</td><td>${t.city}</td><td>${t.course}</td><td class="num">${t.marks}</td></tr>`).join('');
+    $('report').className = '';
+    $('report').innerHTML = `
+      <table><tr><th>Course</th><th>Students</th><th>Avg marks</th><th>Attendance</th></tr>${rows}</table>
+      <h2 style="margin-top:16px">Top 5</h2>
+      <table><tr><th>Name</th><th>City</th><th>Course</th><th>Marks</th></tr>${top}</table>`;
+  }
+
+  // Keys sirf button dabane pe server se aati hain (taaki `redis-cli MONITOR` me
+  // faltu commands na dikhein). TTL ka countdown browser me hi chalta hai.
+  let cachedKeys = [];
+
+  async function loadKeys() {
+    const keys = await api('/api/cache/keys');
+    cachedKeys = keys.map((k) => ({ key: k.key, expiresAt: Date.now() + k.ttl * 1000 }));
+    renderKeys();
+  }
+
+  function renderKeys() {
+    cachedKeys = cachedKeys.filter((k) => k.expiresAt > Date.now());
+    $('keys').innerHTML = cachedKeys.length
+      ? cachedKeys.map((k) => `<div><span>${k.key}</span><span>TTL ${Math.ceil((k.expiresAt - Date.now()) / 1000)}s</span></div>`).join('')
+      : '<div class="empty">Koi key nahi (cache khaali hai)</div>';
+  }
+
+  async function getReport(which, url, btn) {
+    btn.disabled = true;
+    try {
+      const r = await api(url + '?city=' + encodeURIComponent($('city').value));
+      record(which, r);
+      showFlow(r.cache);
+      renderReport(r.data, r.source);
+      await loadKeys();
+    } catch (e) {
+      $('flowText').textContent = 'Error: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  $('btnNoCache').onclick = (e) => getReport('NoCache', '/api/report/no-cache', e.currentTarget);
+  $('btnCache').onclick = (e) => getReport('Cache', '/api/report/cache', e.currentTarget);
+
+  $('btnClear').onclick = async () => {
+    const r = await api('/api/cache', { method: 'DELETE' });
+    $('toast').textContent = `${r.deleted} key(s) delete ho gayi. Ab agli request MISS hogi.`;
+    loadKeys();
+  };
+
+  $('btnAdd').onclick = async () => {
+    const city = $('city').value === 'all' ? 'Delhi' : $('city').value;
+    const r = await api('/api/students', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ city }),
+    });
+    $('toast').textContent = `Naya student add hua: ${r.added.name} (${r.added.city}). Ab "With Cache" dabake dekho count badla ya nahi.`;
+    loadKeys();
+    loadInfo();
+  };
+
+  setInterval(renderKeys, 1000);
+  loadInfo().then(loadKeys).catch((e) => $('flowText').textContent = 'Server se connect nahi hua: ' + e.message);
+</script>
+</body>
+</html>
